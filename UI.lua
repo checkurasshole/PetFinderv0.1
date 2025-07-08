@@ -26,11 +26,10 @@ function UIModule.createUI(Window, config, sessionStats, modules)
         Callback = function(Text)
             config.webhookUrl = Text
             ConfigModule.saveConfig(config)
-            Window:CreateNotification({
-                Title = 'Webhook Updated & Saved',
-                Content = 'Discord webhook URL has been updated and saved',
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Webhook Updated & Saved",
+                Text = "Discord webhook URL has been updated and saved",
                 Duration = 3,
-                Image = 4483362458,
             })
         end,
     })
@@ -46,18 +45,16 @@ function UIModule.createUI(Window, config, sessionStats, modules)
             config.autoScanEnabled = Value
             ConfigModule.saveConfig(config)
             if Value then
-                Window:CreateNotification({
-                    Title = 'Auto Scan Enabled & Saved',
-                    Content = 'Automatic scanning is now active and saved',
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Auto Scan Enabled & Saved",
+                    Text = "Automatic scanning is now active and saved",
                     Duration = 3,
-                    Image = 4483362458,
                 })
             else
-                Window:CreateNotification({
-                    Title = 'Auto Scan Disabled & Saved',
-                    Content = 'Automatic scanning has been stopped and saved',
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Auto Scan Disabled & Saved",
+                    Text = "Automatic scanning has been stopped and saved",
                     Duration = 3,
-                    Image = 4483362458,
                 })
             end
         end,
@@ -71,18 +68,16 @@ function UIModule.createUI(Window, config, sessionStats, modules)
             config.autoServerHopEnabled = Value
             ConfigModule.saveConfig(config)
             if Value then
-                Window:CreateNotification({
-                    Title = 'Auto Server Hop Enabled & Saved',
-                    Content = 'Automatic server hopping is now active and saved',
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Auto Server Hop Enabled & Saved",
+                    Text = "Automatic server hopping is now active and saved",
                     Duration = 3,
-                    Image = 4483362458,
                 })
             else
-                Window:CreateNotification({
-                    Title = 'Auto Server Hop Disabled & Saved',
-                    Content = 'Automatic server hopping has been stopped and saved',
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Auto Server Hop Disabled & Saved",
+                    Text = "Automatic server hopping has been stopped and saved",
                     Duration = 3,
-                    Image = 4483362458,
                 })
             end
         end,
@@ -154,11 +149,10 @@ function UIModule.createUI(Window, config, sessionStats, modules)
         Name = 'Manual Scan & Send',
         Callback = function()
             ScanModule.performScan(true, config, sessionStats, DataModule, ESPModule, WebhookModule)
-            Window:CreateNotification({
-                Title = 'Manual Scan',
-                Content = 'Performing manual scan...',
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Manual Scan",
+                Text = "Performing manual scan...",
                 Duration = 2,
-                Image = 4483362458,
             })
         end,
     })
@@ -170,11 +164,10 @@ function UIModule.createUI(Window, config, sessionStats, modules)
                 ServerHopModule.performEnhancedServerHop(config)
             end)
             if not success then
-                Window:CreateNotification({
-                    Title = 'Server Hop Failed',
-                    Content = 'Failed to hop servers: ' .. tostring(errorMsg),
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Server Hop Failed",
+                    Text = "Failed to hop servers: " .. tostring(errorMsg),
                     Duration = 5,
-                    Image = 4483362458,
                 })
             end
         end,
@@ -188,11 +181,10 @@ function UIModule.createUI(Window, config, sessionStats, modules)
                 config[key] = value
             end
             ConfigModule.saveConfig(config)
-            Window:CreateNotification({
-                Title = 'Settings Reset',
-                Content = 'All settings have been reset to defaults and saved',
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Settings Reset",
+                Text = "All settings have been reset to defaults and saved",
                 Duration = 3,
-                Image = 4483362458,
             })
             
             -- Update UI elements

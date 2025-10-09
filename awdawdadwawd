@@ -1,0 +1,802 @@
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+local PlantingModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/checkurasshole/PetFinderv0.1/refs/heads/main/latch"))()
+local BrainrotModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/checkurasshole/PetFinderv0.1/refs/heads/main/watchh"))()
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local Character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+
+-- Initialize variables
+local espEnabled = true
+local isPlanting = false
+local isRemoving = false
+local autoCollectMoney = false
+local collectMoneyInterval = 5
+local autoBuyGear = false
+local autoBuySeed = false
+local selectedGears = {}
+local selectedSeeds = {}
+
+-- Initialize PlantingModule
+local success, message = PlantingModule.initialize()
+if not success then
+    WindUI:Notify({
+        Title = "Error",
+        Content = message,
+        Duration = 10
+    })
+    error(message)
+end
+
+PlantingModule.updateAllESP(espEnabled)
+
+-- Notification handler
+local Notification = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Notification")
+Notification.OnClientEvent:Connect(function(data)
+    if data and data.Text and data.Text:find("Too many plants!") then
+        PlantingModule.plantLimitReached = true
+        isPlanting = false
+        WindUI:Notify({
+            Title = "Limit Reached",
+            Duration = 5
+        })
+    end
+end)
+
+local function notify(title, content, duration)
+    WindUI:Notify({
+        Title = title,
+        Content = content,
+        Duration = duration
+    })
+end
+
+-- Initialize BrainrotModule
+BrainrotModule.initialize(notify)
+
+-- Create Window
+local Window = WindUI:CreateWindow({
+    Title = "Combined Hub v3",
+    Icon = "geist:window",
+    Author = "Multi-Feature Script",
+    Folder = "CombinedHub",
+    Size = UDim2.fromOffset(580, 490),
+    Theme = "Dark",
+    HidePanelBackground = false,
+    User = {
+        Enabled = false
+    },
+    Acrylic = false,
+    HideSearchBar = false,
+    SideBarWidth = 200,
+})
+
+-- Create Sections
+local Sections = {
+    Farming = Window:Section({ Title = "Farming", Opened = true }),
+    Plants = Window:Section({ Title = "Plants & Seeds", Opened = true }),
+    Shop = Window:Section({ Title = "Shop & Upgrades", Opened = true }),
+    Settings = Window:Section({ Title = "Settings", Opened = true })
+}
+
+-- Create Tabs
+local Tabs = {
+    AutoFarm = Sections.Farming:Tab({ Title = "Auto Farm", Icon = "zap", Desc = "Brainrot farming" }),
+    Plants = Sections.Plants:Tab({ Title = "Plant Mode", Icon = "leaf", Desc = "Place plants" }),
+    Seeds = Sections.Plants:Tab({ Title = "Seed Mode", Icon = "sprout", Desc = "Continuous planting" }),
+    Remove = Sections.Plants:Tab({ Title = "Remove", Icon = "trash-2", Desc = "Remove plants" }),
+    Shop = Sections.Shop:Tab({ Title = "Shop", Icon = "shopping-cart", Desc = "Buy items" }),
+    Management = Sections.Shop:Tab({ Title = "Management", Icon = "package", Desc = "Manage resources" }),
+    Settings = Sections.Settings:Tab({ Title = "Settings", Icon = "settings", Desc = "Configure script" })
+}
+
+-- ==================== FARM TAB ====================
+Tabs.AutoFarm:Section({ Title = "===============", TextSize = 20 })
+
+local TargetBrainrotDropdown = Tabs.AutoFarm:Dropdown({
+    Title = "Target Type",
+    Values = {"Godly", "Secret", "Mythic", "Legendary", "Epic", "Rare", "Common"},
+    Value = {},
+    Multi = true,
+    Callback = function(Value)
+        BrainrotModule.settings.selectedBrainrotTypes = {}
+        for rarity, isSelected in pairs(Value) do
+            if isSelected then
+                BrainrotModule.settings.selectedBrainrotTypes[rarity] = true
+            end
+        end
+    end
+})
+
+local AttackModeDropdown = Tabs.AutoFarm:Dropdown({
+    Title = "Mode",
+    Values = {"WeaponAttack"},
+    Value = "WeaponAttack",
+    Callback = function(Value)
+        BrainrotModule.settings.attackMode = Value
+    end
+})
+
+local FarmToggle = Tabs.AutoFarm:Toggle({
+    Title = "Farm",
+    Value = false,
+    Callback = function(Value)
+        BrainrotModule.settings.teleportEnabled = Value
+        if Value then
+            if next(BrainrotModule.settings.selectedBrainrotTypes) == nil then
+                notify("Warning", "No types selected!", 5)
+                BrainrotModule.settings.teleportEnabled = false
+                FarmToggle:Set(false)
+                return
+            end
+            BrainrotModule.startMainAttackLoop()
+        else
+            humanoidRootPart.Anchored = false
+            BrainrotModule.currentTarget = nil
+        end
+    end
+})
+
+local AttackSpeedSlider = Tabs.AutoFarm:Slider({
+    Title = "Speed",
+    Value = { Min = 2, Max = 1000, Default = 20 },
+    Callback = function(Value)
+        BrainrotModule.settings.attackSpeed = 0.5 / Value
+    end
+})
+
+Tabs.AutoFarm:Divider()
+Tabs.AutoFarm:Section({ Title = "===============", TextSize = 18 })
+
+local ESPRarityDropdown = Tabs.AutoFarm:Dropdown({
+    Title = "ESP Filter",
+    Values = {"All", "Godly", "Secret", "Mythic", "Legendary", "Epic", "Rare", "None"},
+    Value = "All",
+    Callback = function(Value)
+        BrainrotModule.settings.espRarityFilter = Value
+        if Value == "None" then
+            for _, highlight in pairs(BrainrotModule.highlights) do
+                if highlight then highlight:Destroy() end
+            end
+            BrainrotModule.highlights = {}
+        else
+            BrainrotModule.updateAllHighlights()
+        end
+    end
+})
+
+local HighlightToggle = Tabs.AutoFarm:Toggle({
+    Title = "ESP",
+    Value = true,
+    Callback = function(Value)
+        BrainrotModule.settings.highlightRare = Value
+        if not Value then
+            for _, highlight in pairs(BrainrotModule.highlights) do
+                if highlight then highlight:Destroy() end
+            end
+            BrainrotModule.highlights = {}
+        else
+            BrainrotModule.updateAllHighlights()
+        end
+    end
+})
+
+-- ==================== PLANTS TAB ====================
+Tabs.Plants:Section({ Title = "===============", TextSize = 20 })
+
+local selectedPlantRarities = {}
+
+local PlantDropdown = Tabs.Plants:Dropdown({
+    Title = "Rarities",
+    Values = PlantingModule.rarityOrder,
+    Value = {},
+    Multi = true,
+    Callback = function(Values)
+        selectedPlantRarities = {}
+        for _, rarity in ipairs(PlantingModule.rarityOrder) do
+            if Values[rarity] then
+                table.insert(selectedPlantRarities, rarity)
+            end
+        end
+    end
+})
+
+local PlantToggle = Tabs.Plants:Toggle({
+    Title = "Plant",
+    Value = false,
+    Callback = function(Value)
+        if Value then
+            if #selectedPlantRarities == 0 then
+                notify("No Selection", "Select at least one rarity!", 3)
+                PlantToggle:Set(false)
+                return
+            end
+            
+            if isPlanting then
+                notify("Already Running", "Planting is already active!", 3)
+                PlantToggle:Set(false)
+                return
+            end
+            
+            PlantingModule.plantLimitReached = false
+            isPlanting = true
+            
+            task.spawn(function()
+                local plantsByRarity, _ = PlantingModule.scanBackpack()
+                local allSelectedPlants = {}
+                local totalCount = 0
+                
+                for _, rarity in ipairs(selectedPlantRarities) do
+                    if plantsByRarity[rarity] then
+                        for _, plant in ipairs(plantsByRarity[rarity]) do
+                            table.insert(allSelectedPlants, plant)
+                            totalCount = totalCount + 1
+                        end
+                    end
+                end
+                
+                if totalCount == 0 then
+                    isPlanting = false
+                    PlantToggle:Set(false)
+                    notify("No Plants", "No plants found in inventory!", 4)
+                    return
+                end
+                
+                notify("Planting", "Starting plant placement...", 3)
+                
+                local planted = 0
+                local skipped = 0
+                local plantIndex = 1
+                
+                for spotIndex = 1, #PlantingModule.allGrassSpots do
+                    if not PlantToggle.Value then break end
+                    if plantIndex > #allSelectedPlants then break end
+                    if PlantingModule.plantLimitReached then break end
+                    
+                    if PlantingModule.isSpotOccupied(spotIndex) then
+                        skipped = skipped + 1
+                        continue
+                    end
+                    
+                    local spot = PlantingModule.allGrassSpots[spotIndex]
+                    local plant = allSelectedPlants[plantIndex]
+                    
+                    local equipped, newSearchIndex = PlantingModule.findAndEquipTool(plant.tool, PlantingModule.currentSearchIndex)
+                    PlantingModule.currentSearchIndex = newSearchIndex + 1
+                    
+                    if PlantingModule.currentSearchIndex > 10 then
+                        PlantingModule.currentSearchIndex = 1
+                    end
+                    
+                    if equipped then
+                        task.wait(0.1)
+                        
+                        local equippedTool = Character:FindFirstChildOfClass("Tool")
+                        if equippedTool then
+                            local plantId = PlantingModule.getId(equippedTool)
+                            
+                            if plantId then
+                                local success = pcall(function()
+                                    local args = {{
+                                        ID = plantId,
+                                        CFrame = spot.part.CFrame,
+                                        Item = plant.name,
+                                        Floor = spot.part
+                                    }}
+                                    ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PlaceItem"):FireServer(unpack(args))
+                                end)
+                                
+                                if success then
+                                    PlantingModule.markSpotOccupied(spotIndex)
+                                    planted = planted + 1
+                                    plantIndex = plantIndex + 1
+                                end
+                            end
+                        end
+                        
+                        task.wait(0.15)
+                    else
+                        plantIndex = plantIndex + 1
+                    end
+                end
+                
+                isPlanting = false
+                PlantToggle:Set(false)
+                notify(PlantingModule.plantLimitReached and "Limit Reached" or "Complete", "Planting finished!", 5)
+            end)
+        else
+            isPlanting = false
+        end
+    end
+})
+
+-- ==================== SEEDS TAB ====================
+Tabs.Seeds:Section({ Title = "===============", TextSize = 20 })
+
+local selectedSeedNames = {}
+local allSeedOptions = {}
+local allSeedData = {}
+local seedRarityOrder = {"Secret", "Godly", "Mythic", "Legendary", "Epic", "Rare"}
+
+for _, rarity in ipairs(seedRarityOrder) do
+    for _, seedName in ipairs(PlantingModule.validSeedNames) do
+        if PlantingModule.getSeedRarity(seedName) == rarity then
+            local label = seedName .. " - " .. rarity
+            table.insert(allSeedOptions, label)
+            allSeedData[label] = seedName
+        end
+    end
+end
+
+local SeedDropdown = Tabs.Seeds:Dropdown({
+    Title = "Seeds",
+    Values = allSeedOptions,
+    Value = {},
+    Multi = true,
+    Callback = function(Values)
+        selectedSeedNames = {}
+        for label, _ in pairs(Values) do
+            local seedName = allSeedData[label]
+            if seedName then
+                table.insert(selectedSeedNames, seedName)
+            end
+        end
+    end
+})
+
+local SeedToggle = Tabs.Seeds:Toggle({
+    Title = "Plant Seeds",
+    Value = false,
+    Callback = function(Value)
+        if Value then
+            if #selectedSeedNames == 0 then
+                notify("No Selection", "Select at least one seed!", 3)
+                SeedToggle:Set(false)
+                return
+            end
+            
+            if isPlanting then
+                notify("Already Running", "Planting is already active!", 3)
+                SeedToggle:Set(false)
+                return
+            end
+            
+            PlantingModule.plantLimitReached = false
+            isPlanting = true
+            
+            task.spawn(function()
+                notify("Planting Seeds", "Starting continuous planting...", 3)
+                
+                while SeedToggle.Value and isPlanting do
+                    local plantsByRarity, seedsByName = PlantingModule.scanBackpack()
+                    local allSelectedSeeds = {}
+                    
+                    for _, seedName in ipairs(selectedSeedNames) do
+                        if seedsByName[seedName] then
+                            for _, seed in ipairs(seedsByName[seedName]) do
+                                table.insert(allSelectedSeeds, seed)
+                            end
+                        end
+                    end
+                    
+                    if #allSelectedSeeds == 0 then
+                        task.wait(1)
+                        continue
+                    end
+                    
+                    local seedIndex = 1
+                    
+                    for spotIndex = 1, #PlantingModule.allGrassSpots do
+                        if not SeedToggle.Value then break end
+                        if seedIndex > #allSelectedSeeds then break end
+                        if PlantingModule.plantLimitReached then break end
+                        
+                        if PlantingModule.isSpotOccupied(spotIndex) then
+                            continue
+                        end
+                        
+                        local spot = PlantingModule.allGrassSpots[spotIndex]
+                        local seed = allSelectedSeeds[seedIndex]
+                        
+                        if seed.tool.Parent ~= player:WaitForChild("Backpack") then
+                            break
+                        end
+                        
+                        local equipped, newSearchIndex = PlantingModule.findAndEquipTool(seed.tool, PlantingModule.currentSearchIndex)
+                        PlantingModule.currentSearchIndex = newSearchIndex + 1
+                        
+                        if PlantingModule.currentSearchIndex > 10 then
+                            PlantingModule.currentSearchIndex = 1
+                        end
+                        
+                        if equipped then
+                            task.wait(0.1)
+                            
+                            local equippedTool = Character:FindFirstChildOfClass("Tool")
+                            if equippedTool then
+                                local seedId = PlantingModule.getId(equippedTool)
+                                
+                                if seedId then
+                                    local success = pcall(function()
+                                        local args = {{
+                                            ID = seedId,
+                                            CFrame = spot.part.CFrame,
+                                            Item = seed.name,
+                                            Floor = spot.part
+                                        }}
+                                        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PlaceItem"):FireServer(unpack(args))
+                                    end)
+                                    
+                                    if success then
+                                        PlantingModule.markSpotOccupied(spotIndex)
+                                        seedIndex = seedIndex + 1
+                                    end
+                                end
+                            end
+                            
+                            task.wait(0.15)
+                        else
+                            seedIndex = seedIndex + 1
+                        end
+                    end
+                    
+                    task.wait(0.5)
+                    
+                    if PlantingModule.plantLimitReached or not SeedToggle.Value then
+                        break
+                    end
+                end
+                
+                isPlanting = false
+                SeedToggle:Set(false)
+                notify(PlantingModule.plantLimitReached and "Limit Reached" or "Complete", "Seed planting finished!", 5)
+            end)
+        else
+            isPlanting = false
+            notify("Stopped", "Stopped seed planting!", 2)
+        end
+    end
+})
+
+-- ==================== REMOVE TAB ====================
+Tabs.Remove:Section({ Title = "===============", TextSize = 20 })
+
+local selectedRemoveRarities = {}
+
+local RemoveDropdown = Tabs.Remove:Dropdown({
+    Title = "Rarities",
+    Values = PlantingModule.rarityOrder,
+    Value = {},
+    Multi = true,
+    Callback = function(Values)
+        selectedRemoveRarities = {}
+        for rarity, _ in pairs(Values) do
+            table.insert(selectedRemoveRarities, rarity)
+        end
+    end
+})
+
+local RemoveToggle = Tabs.Remove:Toggle({
+    Title = "Remove",
+    Value = false,
+    Callback = function(Value)
+        if Value then
+            if isRemoving then
+                notify("Already Running", "Removal is already active!", 3)
+                RemoveToggle:Set(false)
+                return
+            end
+            
+            isRemoving = true
+            local removeAllMode = #selectedRemoveRarities == 0
+            
+            notify("Removing", "Starting plant removal...", 3)
+            
+            if removeAllMode then
+                PlantingModule.clearOccupiedSpots()
+            end
+            
+            task.spawn(function()
+                while RemoveToggle.Value and isRemoving do
+                    PlantingModule.removeAllPlants(selectedRemoveRarities)
+                    task.wait(2)
+                end
+                
+                isRemoving = false
+                notify("Stopped", "Stopped plant removal!", 5)
+            end)
+        else
+            isRemoving = false
+        end
+    end
+})
+
+Tabs.Remove:Button({
+    Title = "Clear All",
+    Icon = "trash",
+    Variant = "Destructive",
+    Callback = function()
+        PlantingModule.clearOccupiedSpots()
+        PlantingModule.removeAllPlants({})
+        notify("Cleared", "All plants cleared!", 5)
+    end
+})
+
+-- ==================== SHOP TAB ====================
+Tabs.Shop:Section({ Title = "===============", TextSize = 20 })
+
+local AutoBuyPlatformToggle = Tabs.Shop:Toggle({
+    Title = "Buy Platforms",
+    Value = false,
+    Callback = function(Value)
+        BrainrotModule.settings.autoBuyPlatform = Value
+        if Value then
+            task.spawn(function()
+                while BrainrotModule.settings.autoBuyPlatform do
+                    for i = BrainrotModule.settings.platformLevel, 30 do
+                        if not BrainrotModule.settings.autoBuyPlatform then break end
+                        local args = { [1] = tostring(i) }
+                        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyPlatform"):FireServer(unpack(args))
+                        task.wait(0.5)
+                    end
+                    task.wait(2)
+                end
+            end)
+        end
+    end
+})
+
+Tabs.Shop:Button({
+    Title = "Buy All (1-30)",
+    Icon = "layers",
+    Variant = "Primary",
+    Callback = function()
+        for i = 1, 30 do
+            local args = { [1] = tostring(i) }
+            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyPlatform"):FireServer(unpack(args))
+            task.wait(0.1)
+        end
+        notify("Platforms", "Bought all!", 3)
+    end
+})
+
+Tabs.Shop:Divider()
+Tabs.Shop:Section({ Title = "===============", TextSize = 18 })
+
+local GearDropdown = Tabs.Shop:Dropdown({
+    Title = "Gear",
+    Values = BrainrotModule.gearList,
+    Value = {},
+    Multi = true,
+    Callback = function(Value)
+        selectedGears = {}
+        for gear, isSelected in pairs(Value) do
+            if isSelected then
+                table.insert(selectedGears, gear)
+            end
+        end
+    end
+})
+
+local AutoBuyGearToggle = Tabs.Shop:Toggle({
+    Title = "Buy Gear",
+    Value = false,
+    Callback = function(Value)
+        autoBuyGear = Value
+        if Value then
+            task.spawn(function()
+                while autoBuyGear do
+                    for _, gearName in ipairs(selectedGears) do
+                        if not autoBuyGear then break end
+                        local args = { [1] = gearName, [2] = true }
+                        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyGear"):FireServer(unpack(args))
+                        task.wait(0.1)
+                    end
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+Tabs.Shop:Button({
+    Title = "Buy All",
+    Icon = "wrench",
+    Callback = function()
+        for _, gearName in ipairs(BrainrotModule.gearList) do
+            local args = { [1] = gearName, [2] = true }
+            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyGear"):FireServer(unpack(args))
+            task.wait(0.1)
+        end
+        notify("Gear", "Bought all!", 3)
+    end
+})
+
+Tabs.Shop:Divider()
+Tabs.Shop:Section({ Title = "===============", TextSize = 18 })
+
+local SeedShopDropdown = Tabs.Shop:Dropdown({
+    Title = "Seeds",
+    Values = BrainrotModule.seedsList,
+    Value = {},
+    Multi = true,
+    Callback = function(Value)
+        selectedSeeds = {}
+        for seed, isSelected in pairs(Value) do
+            if isSelected then
+                table.insert(selectedSeeds, seed)
+            end
+        end
+    end
+})
+
+local AutoBuySeedToggle = Tabs.Shop:Toggle({
+    Title = "Buy Seeds",
+    Value = false,
+    Callback = function(Value)
+        autoBuySeed = Value
+        if Value then
+            task.spawn(function()
+                while autoBuySeed do
+                    for _, seedName in ipairs(selectedSeeds) do
+                        if not autoBuySeed then break end
+                        local args = { [1] = seedName, [2] = true }
+                        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyItem"):FireServer(unpack(args))
+                        task.wait(0.1)
+                    end
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+Tabs.Shop:Button({
+    Title = "Buy All",
+    Icon = "shopping-bag",
+    Callback = function()
+        for _, seedName in ipairs(BrainrotModule.seedsList) do
+            local args = { [1] = seedName, [2] = true }
+            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyItem"):FireServer(unpack(args))
+            task.wait(0.1)
+        end
+        notify("Seeds", "Bought all!", 3)
+    end
+})
+
+-- ==================== MANAGEMENT TAB ====================
+Tabs.Management:Section({ Title = "===============", TextSize = 20 })
+
+Tabs.Management:Button({
+    Title = "Place Best",
+    Icon = "star",
+    Variant = "Primary",
+    Callback = function()
+        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("EquipBestBrainrots"):FireServer()
+        notify("Brainrots", "Placed best!", 3)
+    end
+})
+
+local AutoCollectMoneySlider = Tabs.Management:Slider({
+    Title = "Collect Interval (s)",
+    Value = { Min = 1, Max = 60, Default = 5 },
+    Callback = function(Value)
+        collectMoneyInterval = Value
+    end
+})
+
+local AutoCollectMoneyToggle = Tabs.Management:Toggle({
+    Title = "Collect Money",
+    Value = false,
+    Callback = function(Value)
+        autoCollectMoney = Value
+        if Value then
+            task.spawn(function()
+                while autoCollectMoney do
+                    ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("EquipBestBrainrots"):FireServer()
+                    task.wait(collectMoneyInterval)
+                end
+            end)
+        end
+    end
+})
+
+Tabs.Management:Button({
+    Title = "Sell All",
+    Icon = "dollar-sign",
+    Variant = "Destructive",
+    Callback = function()
+        local args = { [3] = true }
+        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ItemSell"):FireServer(unpack(args))
+        notify("Shop", "Sold all!", 3)
+    end
+})
+
+Tabs.Management:Divider()
+Tabs.Management:Section({ Title = "===============", TextSize = 18 })
+
+local AutoRebirthToggle = Tabs.Management:Toggle({
+    Title = "Rebirth",
+    Value = false,
+    Callback = function(Value)
+        BrainrotModule.settings.autoRebirth = Value
+        if Value then
+            task.spawn(function()
+                while BrainrotModule.settings.autoRebirth do
+                    ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Rebirth"):FireServer()
+                    task.wait(1)
+                end
+            end)
+        end
+    end
+})
+
+Tabs.Management:Button({
+    Title = "Rebirth Once",
+    Icon = "refresh-cw",
+    Callback = function()
+        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Rebirth"):FireServer()
+        notify("Rebirth", "Done!", 3)
+    end
+})
+
+Tabs.Management:Divider()
+Tabs.Management:Section({ Title = "===============", TextSize = 18 })
+
+Tabs.Management:Button({
+    Title = "Teleport Prison",
+    Icon = "map-pin",
+    Callback = function()
+        local prison = game:GetService("Workspace").ScriptedMap:FindFirstChild("Prison")
+        if prison then
+            local wantedSign = prison:FindFirstChild("WantedSign")
+            if wantedSign then
+                humanoidRootPart.CFrame = wantedSign:GetPivot() * CFrame.new(0, 5, 0)
+                notify("Prison", "Teleported!", 3)
+            end
+        end
+    end
+})
+
+Tabs.Management:Button({
+    Title = "Turn In",
+    Icon = "check-circle",
+    Callback = function()
+        ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Events"):WaitForChild("Prison"):WaitForChild("Interact"):FireServer("TurnIn")
+        notify("Prison", "Turned in!", 3)
+    end
+})
+
+-- ==================== SETTINGS TAB ====================
+Tabs.Settings:Section({ Title = "===============", TextSize = 20 })
+
+local PlantESPToggle = Tabs.Settings:Toggle({
+    Title = "Plant ESP",
+    Value = true,
+    Callback = function(Value)
+        espEnabled = Value
+        PlantingModule.updateAllESP(espEnabled)
+    end
+})
+
+Tabs.Settings:Button({
+    Title = "Reset Tracking",
+    Icon = "rotate-ccw",
+    Callback = function()
+        PlantingModule.clearOccupiedSpots()
+        PlantingModule.plantLimitReached = false
+        notify("Reset", "Tracking reset!", 3)
+    end
+})
+
+-- Final notification
+WindUI:Notify({
+    Title = "Hub Loaded",
+    Content = "Ready!",
+    Icon = "check",
+    Duration = 5
+})
+
+print("\n=== SCRIPT READY ===")

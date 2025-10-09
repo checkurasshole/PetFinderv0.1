@@ -363,7 +363,7 @@ function BrainrotModule.startMainAttackLoop()
     end)
 end
 
-function BrainrotModule.onBrainrotAdded(brainrot)
+function BrainrotModule.onBrainrotAdded(brainrot, notifyCallback)
     print("\n🆕 NEW BRAINROT SPAWNED: " .. brainrot.Name)
     task.wait(0.5)
     
@@ -371,7 +371,7 @@ function BrainrotModule.onBrainrotAdded(brainrot)
         table.insert(BrainrotModule.myBrainrots, brainrot)
         local rarity = BrainrotModule.getBrainrotRarity(brainrot)
         print("✅ ADDED TO LIST | Rarity: " .. rarity .. " | Total: " .. #BrainrotModule.myBrainrots)
-        BrainrotModule.checkAndHighlight(brainrot)
+        BrainrotModule.checkAndHighlight(brainrot, notifyCallback)
     end
 end
 

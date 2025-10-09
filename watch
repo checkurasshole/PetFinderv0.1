@@ -1,0 +1,702 @@
+local BrainrotModule = {}
+
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+
+local plots = workspace:WaitForChild("Plots")
+local brainrotsFolder = workspace.ScriptedMap:WaitForChild("Brainrots")
+local UseItem = replicatedStorage:WaitForChild("Remotes"):WaitForChild("UseItem")
+
+BrainrotModule.myRoadPosition = nil
+BrainrotModule.myRoadSize = nil
+BrainrotModule.myPlotRef = nil
+BrainrotModule.myBrainrots = {}
+BrainrotModule.currentTarget = nil
+BrainrotModule.isAttacking = false
+BrainrotModule.highlights = {}
+
+BrainrotModule.settings = {
+    teleportEnabled = false,
+    bananaGunEnabled = false,
+    autoEquipBat = false,
+    attackSpeed = 0.05,
+    attackMode = "WeaponAttack",
+    highlightRare = true,
+    selectedBrainrotTypes = {},
+    espRarityFilter = "All",
+    autoPlaceEnabled = false,
+    removeRarityFilter = "All",
+    autoRebirth = false,
+    autoBuyPlatform = false,
+    platformLevel = 1
+}
+
+BrainrotModule.rareTypes = {
+    ["Godly"] = true,
+    ["Secret"] = true,
+    ["Mythic"] = true,
+    ["Legendary"] = true,
+    ["Epic"] = true,
+    ["Rare"] = true
+}
+
+BrainrotModule.gearList = {
+    "Banana Gun",
+    "Frost Grenade",
+    "Water Bucket",
+    "Frost Blower",
+    "Carrot Launcher"
+}
+
+BrainrotModule.seedsList = {
+    "Sunflower Seed",
+    "Strawberry Seed",
+    "Cactus Seed",
+    "Pine-a-Punch Seed",
+    "Carnivorous Plant Seed",
+    "Shroombino Seed",
+    "Tomatrio Seed",
+    "Mango Seed",
+    "Mr Carrot Seed",
+    "Cocotank Seed",
+    "Eggplant Seed",
+    "Watermelon Seed",
+    "Grape Seed",
+    "Pumpkin Seed",
+    "Dragon Fruit Seed"
+}
+
+function BrainrotModule.getBrainrotRarity(brainrot)
+    print("🔍 Checking rarity for: " .. brainrot.Name)
+    
+    local stats = brainrot:FindFirstChild("Stats")
+    if not stats then
+        print("⚠️ No Stats folder found for: " .. brainrot.Name)
+        return "Common"
+    end
+    
+    print("📁 Stats folder found, checking descendants...")
+    
+    for _, stat in ipairs(stats:GetDescendants()) do
+        if stat:IsA("ValueBase") then
+            if stat.Name:lower():find("rarity") then
+                local rarity = tostring(stat.Value)
+                rarity = rarity:sub(1,1):upper() .. rarity:sub(2):lower()
+                print("✅ Found rarity (ValueBase): " .. rarity)
+                return rarity
+            end
+        elseif stat:IsA("TextLabel") or stat:IsA("TextButton") then
+            if stat.Name:lower():find("rarity") then
+                local rarity = stat.Text
+                rarity = rarity:sub(1,1):upper() .. rarity:sub(2):lower()
+                print("✅ Found rarity (TextLabel): " .. rarity)
+                return rarity
+            end
+        end
+    end
+    
+    print("❌ No rarity found, defaulting to Common")
+    return "Common"
+end
+
+function BrainrotModule.findMyPlotRoad()
+    print("\n🔍 Searching for my plot...")
+    print("👤 Player Name: " .. player.Name)
+    print("🎮 Display Name: " .. player.DisplayName)
+    print("🆔 User ID: " .. player.UserId)
+    
+    for _, plot in ipairs(plots:GetChildren()) do
+        local isMine = false
+        
+        local ownerUserId = plot:GetAttribute("Owner")
+        if ownerUserId then
+            ownerUserId = tonumber(ownerUserId)
+            if ownerUserId == player.UserId then
+                isMine = true
+                print("✅ Found plot via Owner attribute (UserId match)")
+            end
+        end
+        
+        if plot:FindFirstChild("Owner") and plot.Owner:IsA("ObjectValue") then
+            if plot.Owner.Value == player then
+                isMine = true
+                print("✅ Found plot via Owner ObjectValue")
+            end
+        end
+        
+        if plot:FindFirstChild("Owner") and plot.Owner:IsA("StringValue") then
+            if plot.Owner.Value == player.Name then
+                isMine = true
+                print("✅ Found plot via Owner StringValue")
+            end
+        end
+        
+        local playerSign = plot:FindFirstChild("PlayerSign")
+        if playerSign then
+            local billboardGui = playerSign:FindFirstChild("BillboardGui")
+            if billboardGui then
+                local textLabel = billboardGui:FindFirstChild("TextLabel")
+                if textLabel then
+                    if textLabel.Text == player.Name or textLabel.Text == player.DisplayName then
+                        isMine = true
+                        print("✅ Found plot via PlayerSign GUI (Text: " .. textLabel.Text .. ")")
+                    end
+                end
+            end
+        end
+        
+        if isMine then
+            print("\n🎉 MY PLOT DETECTED!")
+            print("🏠 Plot Name: " .. plot.Name)
+            BrainrotModule.myPlotRef = plot
+            
+            print("🔍 Searching dynamically for Road in plot descendants...")
+            
+            for _, descendant in ipairs(plot:GetDescendants()) do
+                if descendant.Name == "Road" then
+                    print("📂 Found object named 'Road'")
+                    print("📂 Full path: " .. descendant:GetFullName())
+                    print("📂 Class: " .. descendant.ClassName)
+                    
+                    local success, err = pcall(function()
+                        BrainrotModule.myRoadPosition = descendant:GetPivot().Position
+                        BrainrotModule.myRoadSize = descendant:GetExtentsSize()
+                    end)
+                    
+                    if success and BrainrotModule.myRoadPosition and BrainrotModule.myRoadSize then
+                        print("✅ ROAD FOUND AND CONFIGURED!")
+                        print("📍 Road Position: " .. tostring(BrainrotModule.myRoadPosition))
+                        print("📏 Road Size: " .. tostring(BrainrotModule.myRoadSize))
+                        return true
+                    else
+                        print("⚠️ Found Road but couldn't get Pivot/Size: " .. tostring(err))
+                        print("🔄 Continuing search for another Road object...")
+                    end
+                end
+            end
+            
+            print("❌ No valid 'Road' object found in plot descendants")
+        end
+    end
+    
+    print("❌ Could not find my plot!")
+    return false
+end
+
+function BrainrotModule.findMyPlot()
+    if BrainrotModule.myPlotRef and BrainrotModule.myPlotRef.Parent then
+        return BrainrotModule.myPlotRef
+    end
+    
+    for _, plot in pairs(plots:GetChildren()) do
+        local isMyPlot = false
+        
+        if plot:FindFirstChild("Owner") and plot.Owner:IsA("ObjectValue") then
+            if plot.Owner.Value == player then
+                isMyPlot = true
+            end
+        end
+        
+        if plot:FindFirstChild("Owner") and plot.Owner:IsA("StringValue") then
+            if plot.Owner.Value == player.Name then
+                isMyPlot = true
+            end
+        end
+        
+        local ownerAttr = plot:GetAttribute("Owner")
+        if ownerAttr then
+            if ownerAttr == player.UserId or ownerAttr == player.Name then
+                isMyPlot = true
+            end
+        end
+        
+        if isMyPlot then
+            BrainrotModule.myPlotRef = plot
+            return plot
+        end
+    end
+    return nil
+end
+
+function BrainrotModule.isBrainrotOnMyRoad(brainrot)
+    if not BrainrotModule.myRoadPosition or not BrainrotModule.myRoadSize then
+        print("⚠️ Road position/size not set for: " .. brainrot.Name)
+        return false
+    end
+    
+    local brainrotPos = brainrot:GetPivot().Position
+    local distance = (brainrotPos - BrainrotModule.myRoadPosition).Magnitude
+    
+    local tolerance = 10
+    local maxDistance = (BrainrotModule.myRoadSize.Magnitude / 2) + tolerance
+    
+    local isOnRoad = distance <= maxDistance
+    
+    print("📏 Distance check for " .. brainrot.Name .. ": " .. math.floor(distance) .. " / " .. math.floor(maxDistance) .. " = " .. (isOnRoad and "ON ROAD ✅" or "NOT ON ROAD ❌"))
+    
+    return isOnRoad
+end
+
+function BrainrotModule.shouldTargetBrainrot(brainrot)
+    if not brainrot or not brainrot.Parent then
+        print("❌ Brainrot is nil or has no parent")
+        return false
+    end
+    
+    print("\n🎯 Checking if should target: " .. brainrot.Name)
+    
+    if next(BrainrotModule.settings.selectedBrainrotTypes) == nil then
+        print("❌ No brainrot types selected")
+        return false
+    end
+    
+    local rarity = BrainrotModule.getBrainrotRarity(brainrot)
+    local shouldTarget = BrainrotModule.settings.selectedBrainrotTypes[rarity] == true
+    
+    print("🎲 Detected Rarity: " .. rarity .. " | Selected: " .. tostring(BrainrotModule.settings.selectedBrainrotTypes[rarity] or false) .. " | Match: " .. (shouldTarget and "YES ✅" or "NO ❌"))
+    
+    return shouldTarget
+end
+
+function BrainrotModule.getNextBrainrot()
+    print("\n🔎 Getting next brainrot...")
+    print("📊 Total brainrots in list: " .. #BrainrotModule.myBrainrots)
+    
+    for i = #BrainrotModule.myBrainrots, 1, -1 do
+        if not BrainrotModule.myBrainrots[i].Parent then
+            print("🗑️ Removing dead brainrot at index " .. i)
+            table.remove(BrainrotModule.myBrainrots, i)
+        end
+    end
+    
+    print("📊 Brainrots after cleanup: " .. #BrainrotModule.myBrainrots)
+    
+    for i, brainrot in ipairs(BrainrotModule.myBrainrots) do
+        print("\n--- Checking brainrot #" .. i .. " ---")
+        if BrainrotModule.shouldTargetBrainrot(brainrot) then
+            print("🎯 SELECTED TARGET: " .. brainrot.Name)
+            return brainrot
+        end
+    end
+    
+    print("❌ No valid target found")
+    return nil
+end
+
+function BrainrotModule.startMainAttackLoop()
+    if BrainrotModule.isAttacking then return end
+    
+    BrainrotModule.isAttacking = true
+    print("\n🚀 STARTING ATTACK LOOP")
+    
+    task.spawn(function()
+        while BrainrotModule.settings.teleportEnabled do
+            print("\n═══════════════════════════")
+            print("⚔️ ATTACK LOOP ITERATION")
+            
+            BrainrotModule.currentTarget = BrainrotModule.getNextBrainrot()
+            
+            if BrainrotModule.currentTarget and BrainrotModule.currentTarget.Parent then
+                print("🎯 Current target: " .. BrainrotModule.currentTarget.Name)
+                
+                while BrainrotModule.currentTarget and BrainrotModule.currentTarget.Parent and BrainrotModule.settings.teleportEnabled do
+                    local success, err = pcall(function()
+                        print("📍 Teleporting to: " .. BrainrotModule.currentTarget.Name)
+                        humanoidRootPart.Anchored = true
+                        humanoidRootPart.CFrame = BrainrotModule.currentTarget:GetPivot()
+                        humanoidRootPart.Anchored = false
+                        
+                        print("⚔️ Attacking...")
+                        if BrainrotModule.settings.attackMode == "WeaponAttack" then
+                            local args = {
+                                [1] = {
+                                    [1] = BrainrotModule.currentTarget.Name
+                                }
+                            }
+                            replicatedStorage:WaitForChild("Remotes", 9e9):WaitForChild("AttacksServer", 9e9):WaitForChild("WeaponAttack", 9e9):FireServer(unpack(args))
+                        else
+                            local tool = character:FindFirstChildWhichIsA("Tool")
+                            if tool then
+                                local args = {
+                                    [1] = {
+                                        ["Toggle"] = true,
+                                        ["Time"] = tick(),
+                                        ["Tool"] = tool,
+                                        ["Pos"] = BrainrotModule.currentTarget:GetPivot().Position
+                                    }
+                                }
+                                UseItem:FireServer(unpack(args))
+                            end
+                        end
+                    end)
+                    
+                    if not success then
+                        print("❌ ERROR: " .. tostring(err))
+                    end
+                    
+                    task.wait(BrainrotModule.settings.attackSpeed)
+                end
+                
+                print("💀 Target destroyed or lost")
+                
+                for i, brainrot in ipairs(BrainrotModule.myBrainrots) do
+                    if brainrot == BrainrotModule.currentTarget then
+                        table.remove(BrainrotModule.myBrainrots, i)
+                        print("🗑️ Removed from list")
+                        break
+                    end
+                end
+            else
+                print("⏸️ No target available, waiting...")
+                task.wait(0.1)
+            end
+        end
+        
+        print("🛑 ATTACK LOOP STOPPED")
+        humanoidRootPart.Anchored = false
+        BrainrotModule.currentTarget = nil
+        BrainrotModule.isAttacking = false
+    end)
+end
+
+function BrainrotModule.onBrainrotAdded(brainrot)
+    print("\n🆕 NEW BRAINROT SPAWNED: " .. brainrot.Name)
+    task.wait(0.5)
+    
+    if BrainrotModule.isBrainrotOnMyRoad(brainrot) then
+        table.insert(BrainrotModule.myBrainrots, brainrot)
+        local rarity = BrainrotModule.getBrainrotRarity(brainrot)
+        print("✅ ADDED TO LIST | Rarity: " .. rarity .. " | Total: " .. #BrainrotModule.myBrainrots)
+        BrainrotModule.checkAndHighlight(brainrot)
+    end
+end
+
+function BrainrotModule.tryAttributes(inst)
+    local names = {"id","Id","ID","itemId","ItemId","InstanceId","instanceId","_id"}
+    for _, n in ipairs(names) do
+        local v = inst:GetAttribute(n)
+        if v ~= nil and tostring(v) ~= "" then
+            return tostring(v)
+        end
+    end
+    return nil
+end
+
+function BrainrotModule.tryChildrenValues(inst)
+    local candidateNames = {"id","Id","ID","_id","itemId","InstanceId"}
+    for _, n in ipairs(candidateNames) do
+        local c = inst:FindFirstChild(n)
+        if c then
+            if c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") or c:IsA("BoolValue") then
+                return tostring(c.Value)
+            elseif c:IsA("ObjectValue") then
+                return tostring(c.Value)
+            end
+        end
+    end
+    for _, c in ipairs(inst:GetChildren()) do
+        if c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") or c:IsA("BoolValue") or c:IsA("ObjectValue") then
+            local nameLower = c.Name:lower()
+            if nameLower:find("id") or nameLower:find("_id") or nameLower:find("item") then
+                return tostring(c.Value)
+            end
+        end
+    end
+    return nil
+end
+
+function BrainrotModule.getId(inst)
+    if not inst then return nil end
+    local v = BrainrotModule.tryAttributes(inst)
+    if v then return v end
+    v = BrainrotModule.tryChildrenValues(inst)
+    if v then return v end
+    local name = tostring(inst.Name or "")
+    if tonumber(name) or name:match("^%w+%-%w+") then
+        return name
+    end
+    return nil
+end
+
+function BrainrotModule.getPlantRarity(plant)
+    local rarityAttr = plant:GetAttribute("Rarity")
+    if rarityAttr then return rarityAttr end
+    
+    local stats = plant:FindFirstChild("Stats")
+    if stats then
+        local rarity = stats:FindFirstChild("Rarity")
+        if rarity and rarity:IsA("StringValue") then
+            return rarity.Value
+        end
+    end
+    
+    return "Common"
+end
+
+function BrainrotModule.removePlants(notifyCallback)
+    local removedCount = 0
+    local myPlot = BrainrotModule.findMyPlot()
+    
+    if not myPlot then
+        if notifyCallback then
+            notifyCallback("Error", "Could not find your plot!", 3)
+        end
+        return
+    end
+    
+    local plants = myPlot:FindFirstChild("Plants")
+    if plants then
+        for _, plant in pairs(plants:GetChildren()) do
+            local plantRarity = BrainrotModule.getPlantRarity(plant)
+            local shouldRemove = BrainrotModule.settings.removeRarityFilter == "All" or plantRarity == BrainrotModule.settings.removeRarityFilter
+            
+            if shouldRemove then
+                local plantId = BrainrotModule.getId(plant)
+                if plantId then
+                    pcall(function()
+                        local args = {
+                            [1] = plantId
+                        }
+                        replicatedStorage:WaitForChild("Remotes", 9e9):WaitForChild("RemoveItem", 9e9):FireServer(unpack(args))
+                        removedCount = removedCount + 1
+                    end)
+                    task.wait(0.05)
+                end
+            end
+        end
+    end
+    
+    if notifyCallback then
+        notifyCallback("Plants", "Removed " .. removedCount .. " plants!", 3)
+    end
+end
+
+function BrainrotModule.startAutoPlace()
+    task.spawn(function()
+        while BrainrotModule.settings.autoPlaceEnabled do
+            local myPlot = BrainrotModule.findMyPlot()
+            if myPlot then
+                local rows = myPlot:FindFirstChild("Rows")
+                if rows then
+                    for _, row in pairs(rows:GetChildren()) do
+                        local grass = row:FindFirstChild("Grass")
+                        if grass then
+                            for _, floor in pairs(grass:GetChildren()) do
+                                if not BrainrotModule.settings.autoPlaceEnabled then break end
+                                
+                                local plantsFolder = myPlot:FindFirstChild("Plants")
+                                if plantsFolder then
+                                    local allPlants = plantsFolder:GetChildren()
+                                    
+                                    if #allPlants > 0 then
+                                        local randomPlant = allPlants[math.random(1, #allPlants)]
+                                        
+                                        pcall(function()
+                                            local args = {
+                                                [1] = {
+                                                    ["ID"] = HttpService:GenerateGUID(false),
+                                                    ["CFrame"] = floor.CFrame * CFrame.new(0, 1, 0),
+                                                    ["Item"] = randomPlant.Name,
+                                                    ["Floor"] = floor
+                                                }
+                                            }
+                                            replicatedStorage:WaitForChild("Remotes", 9e9):WaitForChild("PlaceItem", 9e9):FireServer(unpack(args))
+                                        end)
+                                        task.wait(0.1)
+                                    end
+                                end
+                            end
+                        end
+                        if not BrainrotModule.settings.autoPlaceEnabled then break end
+                    end
+                end
+            end
+            task.wait(1)
+        end
+    end)
+end
+
+function BrainrotModule.getBananaTool()
+    for _, tool in pairs(character:GetChildren()) do
+        if tool:IsA("Tool") and string.find(tool.Name:lower(), "banana") then
+            return tool
+        end
+    end
+    for _, tool in pairs(player.Backpack:GetChildren()) do
+        if tool:IsA("Tool") and string.find(tool.Name:lower(), "banana") then
+            return tool
+        end
+    end
+    return nil
+end
+
+function BrainrotModule.startBananaGunLoop()
+    task.spawn(function()
+        while BrainrotModule.settings.bananaGunEnabled do
+            task.wait(0.05)
+            local tool = BrainrotModule.getBananaTool()
+            if tool then
+                if tool.Parent == player.Backpack then
+                    character.Humanoid:EquipTool(tool)
+                    task.wait(0.1)
+                end
+                
+                for _, br in pairs(BrainrotModule.myBrainrots) do
+                    if br and br.Parent then
+                        local targetPart = br:FindFirstChild("HumanoidRootPart") or br.PrimaryPart or br:FindFirstChildWhichIsA("BasePart")
+                        if targetPart then
+                            pcall(function()
+                                UseItem:FireServer({
+                                    Toggle = true,
+                                    Time = tick(),
+                                    Tool = tool,
+                                    Pos = targetPart.Position
+                                })
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+function BrainrotModule.createHighlight(brainrot, rarity)
+    pcall(function()
+        if not BrainrotModule.settings.highlightRare then return end
+        if BrainrotModule.highlights[brainrot] then return end
+        if not brainrot or not brainrot.Parent then return end
+        
+        if BrainrotModule.settings.espRarityFilter ~= "All" and BrainrotModule.settings.espRarityFilter ~= rarity then
+            return
+        end
+        
+        local highlight = Instance.new("Highlight")
+        highlight.FillTransparency = 0.5
+        highlight.OutlineTransparency = 0
+        
+        if rarity == "Godly" then
+            highlight.FillColor = Color3.fromRGB(255, 215, 0)
+            highlight.OutlineColor = Color3.fromRGB(255, 215, 0)
+        elseif rarity == "Secret" then
+            highlight.FillColor = Color3.fromRGB(255, 0, 255)
+            highlight.OutlineColor = Color3.fromRGB(255, 0, 255)
+        elseif rarity == "Mythic" then
+            highlight.FillColor = Color3.fromRGB(255, 100, 255)
+            highlight.OutlineColor = Color3.fromRGB(255, 100, 255)
+        elseif rarity == "Legendary" then
+            highlight.FillColor = Color3.fromRGB(255, 165, 0)
+            highlight.OutlineColor = Color3.fromRGB(255, 165, 0)
+        elseif rarity == "Epic" then
+            highlight.FillColor = Color3.fromRGB(150, 0, 255)
+            highlight.OutlineColor = Color3.fromRGB(150, 0, 255)
+        elseif rarity == "Rare" then
+            highlight.FillColor = Color3.fromRGB(0, 150, 255)
+            highlight.OutlineColor = Color3.fromRGB(0, 150, 255)
+        else
+            highlight.FillColor = Color3.fromRGB(0, 255, 0)
+            highlight.OutlineColor = Color3.fromRGB(0, 255, 0)
+        end
+        
+        highlight.Parent = brainrot
+        BrainrotModule.highlights[brainrot] = highlight
+        
+        brainrot.AncestryChanged:Connect(function()
+            if not brainrot.Parent then
+                if BrainrotModule.highlights[brainrot] then
+                    pcall(function()
+                        BrainrotModule.highlights[brainrot]:Destroy()
+                    end)
+                    BrainrotModule.highlights[brainrot] = nil
+                end
+            end
+        end)
+    end)
+end
+
+function BrainrotModule.updateAllHighlights()
+    pcall(function()
+        for _, highlight in pairs(BrainrotModule.highlights) do
+            if highlight then 
+                pcall(function() highlight:Destroy() end)
+            end
+        end
+        BrainrotModule.highlights = {}
+        
+        if not BrainrotModule.settings.highlightRare or BrainrotModule.settings.espRarityFilter == "None" then return end
+        
+        for i = #BrainrotModule.myBrainrots, 1, -1 do
+            if not BrainrotModule.myBrainrots[i] or not BrainrotModule.myBrainrots[i].Parent then
+                table.remove(BrainrotModule.myBrainrots, i)
+            end
+        end
+        
+        for _, brainrot in pairs(BrainrotModule.myBrainrots) do
+            if brainrot and brainrot.Parent then
+                pcall(function()
+                    BrainrotModule.checkAndHighlight(brainrot)
+                end)
+            end
+        end
+    end)
+end
+
+function BrainrotModule.checkAndHighlight(brainrot, notifyCallback)
+    pcall(function()
+        local rarityText = BrainrotModule.getBrainrotRarity(brainrot)
+        
+        if BrainrotModule.settings.espRarityFilter == "All" or BrainrotModule.settings.espRarityFilter == rarityText then
+            BrainrotModule.createHighlight(brainrot, rarityText)
+            
+            if BrainrotModule.rareTypes[rarityText] and notifyCallback then
+                notifyCallback("Rare Spawn!", "A " .. rarityText .. " \"" .. brainrot.Name .. "\" is on your road!", 5)
+            end
+        end
+    end)
+end
+
+function BrainrotModule.initialize(notifyCallback)
+    print("=== BRAINROT MODULE INITIALIZING ===")
+    
+    if BrainrotModule.findMyPlotRoad() then
+        print("\n🎉 INITIALIZATION SUCCESSFUL!")
+        print("\n📋 Scanning existing brainrots...")
+        
+        for _, brainrot in pairs(brainrotsFolder:GetChildren()) do
+            print("\n--- Checking existing brainrot ---")
+            if BrainrotModule.isBrainrotOnMyRoad(brainrot) then
+                table.insert(BrainrotModule.myBrainrots, brainrot)
+                local rarity = BrainrotModule.getBrainrotRarity(brainrot)
+                print("✅ Added: " .. brainrot.Name .. " | Rarity: " .. rarity)
+                BrainrotModule.checkAndHighlight(brainrot, notifyCallback)
+            end
+        end
+        
+        print("\n📊 TOTAL BRAINROTS ON ROAD: " .. #BrainrotModule.myBrainrots)
+        
+        brainrotsFolder.ChildAdded:Connect(function(brainrot)
+            BrainrotModule.onBrainrotAdded(brainrot)
+        end)
+        
+        task.wait(0.5)
+        BrainrotModule.updateAllHighlights()
+        
+        if notifyCallback then
+            notifyCallback("Brainrot Hub", "Plot detected! Found " .. #BrainrotModule.myBrainrots .. " brainrots on your road.", 5)
+        end
+        
+        return true
+    else
+        print("\n❌ INITIALIZATION FAILED - NO PLOT FOUND")
+        if notifyCallback then
+            notifyCallback("Error", "Could not find your plot! Check console (F9) for details.", 8)
+        end
+        return false
+    end
+end
+
+return BrainrotModule

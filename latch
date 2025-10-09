@@ -1,0 +1,602 @@
+-- PlantingModule.lua
+-- This should be hosted on GitHub
+
+local PlantingModule = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local Backpack = player:WaitForChild("Backpack")
+local Character = player.Character or player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+
+-- Constants
+PlantingModule.validGrassColors = {
+    Color3.fromRGB(59, 112, 22),
+    Color3.fromRGB(58, 95, 18),
+    Color3.fromRGB(64, 117, 40)
+}
+
+PlantingModule.validPlantNames = {
+    "Cactus", "Strawberry", "Don Fragola", "Pumpkin", "Sunflower", "Sunzio",
+    "Dragon Fruit", "Eggplant", "Aubie", "Watermelon", "Grape", "Cocotank",
+    "Carnivorous Plant", "Copuccino", "Pine-a-Punch", "Mr Carrot", "Tomatrio",
+    "Shroombino", "Mango"
+}
+
+PlantingModule.validSeedNames = {
+    "Cactus Seed", "Strawberry Seed", "Pumpkin Seed", "Sunflower Seed",
+    "Dragon Fruit Seed", "Eggplant Seed", "Watermelon Seed", "Grape Seed",
+    "Cocotank Seed", "Carnivorous Plant Seed", "Mr Carrot Seed", 
+    "Tomatrio Seed", "Shroombino Seed", "Mango Seed"
+}
+
+PlantingModule.seedRarityMap = {
+    ["Cactus Seed"] = "Rare",
+    ["Strawberry Seed"] = "Rare",
+    ["Pumpkin Seed"] = "Epic",
+    ["Sunflower Seed"] = "Epic",
+    ["Dragon Fruit Seed"] = "Legendary",
+    ["Eggplant Seed"] = "Legendary",
+    ["Watermelon Seed"] = "Mythic",
+    ["Grape Seed"] = "Mythic",
+    ["Cocotank Seed"] = "Godly",
+    ["Carnivorous Plant Seed"] = "Godly",
+    ["Mr Carrot Seed"] = "Secret",
+    ["Tomatrio Seed"] = "Secret",
+    ["Shroombino Seed"] = "Secret",
+    ["Mango Seed"] = "Secret"
+}
+
+PlantingModule.rarityOrder = {"Secret", "Godly", "Mythic", "Legendary", "Epic", "Rare"}
+
+-- State variables
+PlantingModule.myPlot = nil
+PlantingModule.rowsFolder = nil
+PlantingModule.plantsFolder = nil
+PlantingModule.filteredByRow = {}
+PlantingModule.allGrassSpots = {}
+PlantingModule.occupiedSpots = {}
+PlantingModule.currentSearchIndex = 1
+PlantingModule.plantLimitReached = false
+
+-- Utility functions
+function PlantingModule.getPlantName(item)
+    local itemNameAttr = item:GetAttribute("ItemName")
+    if itemNameAttr then return itemNameAttr end
+    
+    for _, child in ipairs(item:GetChildren()) do
+        local childItemName = child:GetAttribute("ItemName")
+        if childItemName then return childItemName end
+    end
+    
+    return item.Name
+end
+
+function PlantingModule.getCleanSeedName(itemName)
+    local cleanName = itemName:gsub("%[x%d+%]%s*", "")
+    return cleanName
+end
+
+function PlantingModule.isSeed(itemName)
+    return itemName:lower():find("seed") ~= nil
+end
+
+function PlantingModule.isValidSeed(cleanSeedName)
+    for _, validName in ipairs(PlantingModule.validSeedNames) do
+        if cleanSeedName == validName then return true end
+    end
+    return false
+end
+
+function PlantingModule.isValidPlant(plantName)
+    for _, validName in ipairs(PlantingModule.validPlantNames) do
+        if plantName == validName then return true end
+    end
+    return false
+end
+
+function PlantingModule.getItemRarity(item)
+    local rarityAttr = item:GetAttribute("Rarity")
+    if rarityAttr then return tostring(rarityAttr) end
+    
+    for _, child in ipairs(item:GetChildren()) do
+        local childRarity = child:GetAttribute("Rarity")
+        if childRarity then return tostring(childRarity) end
+    end
+    
+    return "Unknown"
+end
+
+function PlantingModule.getSeedRarity(cleanSeedName)
+    return PlantingModule.seedRarityMap[cleanSeedName] or "Unknown"
+end
+
+function PlantingModule.getId(inst)
+    if not inst then return nil end
+    
+    local names = {"id","Id","ID","itemId","ItemId","InstanceId","instanceId","_id"}
+    for _, n in ipairs(names) do
+        local v = inst:GetAttribute(n)
+        if v ~= nil and tostring(v) ~= "" then
+            return tostring(v)
+        end
+    end
+    
+    local candidateNames = {"id","Id","ID","_id","itemId","InstanceId"}
+    for _, n in ipairs(candidateNames) do
+        local c = inst:FindFirstChild(n)
+        if c then
+            if c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") or c:IsA("BoolValue") then
+                return tostring(c.Value)
+            elseif c:IsA("ObjectValue") then
+                return tostring(c.Value)
+            end
+        end
+    end
+    
+    for _, c in ipairs(inst:GetChildren()) do
+        if c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") or c:IsA("BoolValue") or c:IsA("ObjectValue") then
+            local nameLower = c.Name:lower()
+            if nameLower:find("id") or nameLower:find("_id") or nameLower:find("item") then
+                return tostring(c.Value)
+            end
+        end
+    end
+    
+    local name = tostring(inst.Name or "")
+    if tonumber(name) or name:match("^%w+%-%w+") then
+        return name
+    end
+    
+    return nil
+end
+
+function PlantingModule.isValidGrassColor(color)
+    for _, validColor in ipairs(PlantingModule.validGrassColors) do
+        if color == validColor then
+            return true
+        end
+    end
+    return false
+end
+
+function PlantingModule.getKeyCodeForIndex(index)
+    local mapping = {
+        [1]=Enum.KeyCode.One, [2]=Enum.KeyCode.Two, [3]=Enum.KeyCode.Three,
+        [4]=Enum.KeyCode.Four, [5]=Enum.KeyCode.Five, [6]=Enum.KeyCode.Six,
+        [7]=Enum.KeyCode.Seven, [8]=Enum.KeyCode.Eight, [9]=Enum.KeyCode.Nine,
+        [10]=Enum.KeyCode.Zero
+    }
+    return mapping[index]
+end
+
+function PlantingModule.isSpotOccupied(spotIndex)
+    return PlantingModule.occupiedSpots[spotIndex] == true
+end
+
+function PlantingModule.markSpotOccupied(spotIndex)
+    PlantingModule.occupiedSpots[spotIndex] = true
+end
+
+function PlantingModule.clearOccupiedSpots()
+    PlantingModule.occupiedSpots = {}
+    PlantingModule.currentSearchIndex = 1
+end
+
+-- Plot detection functions
+function PlantingModule.findMyPlot()
+    local Plots = workspace:FindFirstChild("Plots")
+    if not Plots then
+        return nil
+    end
+    
+    for _, plotCheck in ipairs(Plots:GetChildren()) do
+        local isMine = false
+        
+        local ownerUserId = plotCheck:GetAttribute("Owner")
+        if ownerUserId then
+            ownerUserId = tonumber(ownerUserId)
+            if ownerUserId == player.UserId then
+                isMine = true
+            end
+        end
+        
+        if not isMine and plotCheck:FindFirstChild("Owner") and plotCheck.Owner:IsA("ObjectValue") then
+            if plotCheck.Owner.Value == player then
+                isMine = true
+            end
+        end
+        
+        if not isMine and plotCheck:FindFirstChild("Owner") and plotCheck.Owner:IsA("StringValue") then
+            if plotCheck.Owner.Value == player.Name then
+                isMine = true
+            end
+        end
+        
+        if not isMine then
+            local playerSign = plotCheck:FindFirstChild("PlayerSign")
+            if playerSign then
+                local billboardGui = playerSign:FindFirstChild("BillboardGui")
+                if billboardGui then
+                    local textLabel = billboardGui:FindFirstChild("TextLabel")
+                    if textLabel then
+                        if textLabel.Text == player.Name or textLabel.Text == player.DisplayName then
+                            isMine = true
+                        end
+                    end
+                end
+            end
+        end
+        
+        if isMine then
+            return plotCheck
+        end
+    end
+    
+    return nil
+end
+
+function PlantingModule.findRowsFolder(plot)
+    local rows = plot:FindFirstChild("Rows")
+    if rows and rows:IsA("Folder") then
+        return rows
+    end
+    
+    for _, descendant in ipairs(plot:GetDescendants()) do
+        if descendant:IsA("Folder") then
+            local nameLower = descendant.Name:lower()
+            if nameLower:find("row") then
+                return descendant
+            end
+        end
+    end
+    
+    for _, child in ipairs(plot:GetChildren()) do
+        if child:IsA("Folder") then
+            local hasNumberedChildren = false
+            for _, subChild in ipairs(child:GetChildren()) do
+                if tonumber(subChild.Name) then
+                    hasNumberedChildren = true
+                    break
+                end
+            end
+            if hasNumberedChildren then
+                return child
+            end
+        end
+    end
+    
+    return nil
+end
+
+function PlantingModule.findPlantsFolder(plot)
+    local plants = plot:FindFirstChild("Plants")
+    if plants and plants:IsA("Folder") then
+        return plants
+    end
+    
+    for _, descendant in ipairs(plot:GetDescendants()) do
+        if descendant:IsA("Folder") then
+            local nameLower = descendant.Name:lower()
+            if nameLower:find("plant") then
+                return descendant
+            end
+        end
+    end
+    
+    return nil
+end
+
+function PlantingModule.scanGrassSpots()
+    if not PlantingModule.rowsFolder then
+        return
+    end
+    
+    PlantingModule.filteredByRow = {}
+    PlantingModule.allGrassSpots = {}
+    
+    local rows = PlantingModule.rowsFolder:GetChildren()
+    table.sort(rows, function(a,b) 
+        local numA = tonumber(a.Name)
+        local numB = tonumber(b.Name)
+        if numA and numB then
+            return numA < numB
+        end
+        return a.Name < b.Name
+    end)
+    
+    for _, row in ipairs(rows) do
+        local rowName = row.Name
+        PlantingModule.filteredByRow[rowName] = {}
+        
+        for _, child in ipairs(row:GetDescendants()) do
+            if child:IsA("BasePart") then
+                if PlantingModule.isValidGrassColor(child.Color) then
+                    local isGrass = false
+                    
+                    if child.Parent and child.Parent.Name == "Grass" then
+                        isGrass = true
+                    elseif child.Name:lower():find("grass") then
+                        isGrass = true
+                    else
+                        isGrass = true
+                    end
+                    
+                    if isGrass then
+                        table.insert(PlantingModule.filteredByRow[rowName], child)
+                    end
+                end
+            end
+        end
+    end
+    
+    local maxSpotsInAnyRow = 0
+    for _, spots in pairs(PlantingModule.filteredByRow) do
+        if #spots > maxSpotsInAnyRow then
+            maxSpotsInAnyRow = #spots
+        end
+    end
+    
+    for spotIndex = 1, maxSpotsInAnyRow do
+        for _, row in ipairs(rows) do
+            local rowName = row.Name
+            local rowSpots = PlantingModule.filteredByRow[rowName]
+            
+            if rowSpots and rowSpots[spotIndex] then
+                table.insert(PlantingModule.allGrassSpots, {
+                    part = rowSpots[spotIndex],
+                    row = rowName,
+                    index = #PlantingModule.allGrassSpots + 1
+                })
+            end
+        end
+    end
+end
+
+-- ESP functions
+function PlantingModule.createESPWithLabel(part, rowName, spotIndex)
+    if part:FindFirstChild("ESP") then part.ESP:Destroy() end
+    if part:FindFirstChild("ESPLabel") then part.ESPLabel:Destroy() end
+    
+    local esp = Instance.new("SelectionBox")
+    esp.Name = "ESP"
+    esp.Adornee = part
+    esp.Color3 = Color3.fromRGB(0, 255, 0)
+    esp.LineThickness = 0.05
+    esp.Parent = part
+    
+    local billboardGui = Instance.new("BillboardGui")
+    billboardGui.Name = "ESPLabel"
+    billboardGui.Adornee = part
+    billboardGui.Size = UDim2.new(0, 120, 0, 60)
+    billboardGui.StudsOffset = Vector3.new(0, 2, 0)
+    billboardGui.AlwaysOnTop = true
+    billboardGui.Parent = part
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = "Spot " .. spotIndex .. "\nRow " .. rowName
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+    textLabel.TextStrokeTransparency = 0.5
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.Parent = billboardGui
+end
+
+function PlantingModule.removeESP(part)
+    if part:FindFirstChild("ESP") then part.ESP:Destroy() end
+    if part:FindFirstChild("ESPLabel") then part.ESPLabel:Destroy() end
+end
+
+function PlantingModule.updateAllESP(espEnabled)
+    if espEnabled then
+        for i, spot in ipairs(PlantingModule.allGrassSpots) do
+            PlantingModule.createESPWithLabel(spot.part, spot.row, i)
+        end
+    else
+        for _, spot in ipairs(PlantingModule.allGrassSpots) do
+            PlantingModule.removeESP(spot.part)
+        end
+    end
+end
+
+-- Tool management
+function PlantingModule.findAndEquipTool(targetTool, startIndex)
+    Humanoid:UnequipTools()
+    task.wait(0.1)
+    
+    if targetTool.Parent ~= Backpack then
+        return false, startIndex
+    end
+    
+    for i = startIndex, 10 do
+        local keyCode = PlantingModule.getKeyCodeForIndex(i)
+        if keyCode then
+            VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+            task.wait(0.1)
+            
+            local equippedTool = Character:FindFirstChildOfClass("Tool")
+            if equippedTool and equippedTool == targetTool then
+                return true, i
+            end
+            
+            if equippedTool then
+                Humanoid:UnequipTools()
+                task.wait(0.05)
+            end
+        end
+    end
+    
+    if startIndex > 1 then
+        for i = 1, startIndex - 1 do
+            local keyCode = PlantingModule.getKeyCodeForIndex(i)
+            if keyCode then
+                VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+                task.wait(0.02)
+                VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+                task.wait(0.1)
+                
+                local equippedTool = Character:FindFirstChildOfClass("Tool")
+                if equippedTool and equippedTool == targetTool then
+                    return true, i
+                end
+                
+                if equippedTool then
+                    Humanoid:UnequipTools()
+                    task.wait(0.05)
+                end
+            end
+        end
+    end
+    
+    local success = pcall(function()
+        Humanoid:EquipTool(targetTool)
+    end)
+    
+    if success then
+        task.wait(0.15)
+        local equippedTool = Character:FindFirstChildOfClass("Tool")
+        if equippedTool and equippedTool == targetTool then
+            return true, startIndex
+        end
+    end
+    
+    return false, startIndex
+end
+
+function PlantingModule.scanBackpack()
+    local plantsByRarity = {}
+    local seedsByName = {}
+    
+    for _, item in ipairs(Backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            local plantName = PlantingModule.getPlantName(item)
+            
+            if PlantingModule.isSeed(plantName) then
+                local cleanName = PlantingModule.getCleanSeedName(plantName)
+                
+                if PlantingModule.isValidSeed(cleanName) then
+                    if not seedsByName[cleanName] then
+                        seedsByName[cleanName] = {}
+                    end
+                    
+                    table.insert(seedsByName[cleanName], {
+                        tool = item,
+                        name = plantName,
+                        displayName = cleanName,
+                        rarity = PlantingModule.getSeedRarity(cleanName)
+                    })
+                end
+            elseif PlantingModule.isValidPlant(plantName) then
+                local rarity = PlantingModule.getItemRarity(item)
+                
+                if not plantsByRarity[rarity] then
+                    plantsByRarity[rarity] = {}
+                end
+                
+                table.insert(plantsByRarity[rarity], {
+                    tool = item,
+                    name = plantName,
+                    displayName = plantName,
+                    rarity = rarity
+                })
+            end
+        end
+    end
+    
+    return plantsByRarity, seedsByName
+end
+
+-- Plant removal
+function PlantingModule.removeAllPlants(targetRarities)
+    if not PlantingModule.plantsFolder then
+        PlantingModule.plantsFolder = PlantingModule.findPlantsFolder(PlantingModule.myPlot)
+    end
+    
+    if not PlantingModule.plantsFolder then
+        return 0
+    end
+    
+    local plants = PlantingModule.plantsFolder:GetChildren()
+    local removedCount = 0
+    
+    for _, plant in ipairs(plants) do
+        local plantRarity = PlantingModule.getItemRarity(plant)
+        local shouldRemove = false
+        
+        if #targetRarities == 0 then
+            shouldRemove = true
+        else
+            for _, rarity in ipairs(targetRarities) do
+                if plantRarity == rarity then
+                    shouldRemove = true
+                    break
+                end
+            end
+        end
+        
+        if shouldRemove then
+            local plantId = PlantingModule.getId(plant)
+            
+            if plantId then
+                local success = pcall(function()
+                    local args = {[1] = plantId}
+                    ReplicatedStorage:WaitForChild("Remotes", 9e9):WaitForChild("RemoveItem", 9e9):FireServer(unpack(args))
+                end)
+                
+                if success then
+                    removedCount = removedCount + 1
+                end
+            end
+        end
+        
+        task.wait(0.05)
+    end
+    
+    return removedCount
+end
+
+function PlantingModule.scanPlotPlantsByRarity()
+    if not PlantingModule.plantsFolder then
+        PlantingModule.plantsFolder = PlantingModule.findPlantsFolder(PlantingModule.myPlot)
+    end
+    
+    if not PlantingModule.plantsFolder then return {} end
+    
+    local plantCountByRarity = {}
+    
+    for _, plant in ipairs(PlantingModule.plantsFolder:GetChildren()) do
+        local rarity = PlantingModule.getItemRarity(plant)
+        plantCountByRarity[rarity] = (plantCountByRarity[rarity] or 0) + 1
+    end
+    
+    return plantCountByRarity
+end
+
+-- Initialize
+function PlantingModule.initialize()
+    PlantingModule.myPlot = PlantingModule.findMyPlot()
+    if not PlantingModule.myPlot then
+        return false, "Plot detection failed"
+    end
+    
+    PlantingModule.rowsFolder = PlantingModule.findRowsFolder(PlantingModule.myPlot)
+    if not PlantingModule.rowsFolder then
+        return false, "Rows folder detection failed"
+    end
+    
+    PlantingModule.plantsFolder = PlantingModule.findPlantsFolder(PlantingModule.myPlot)
+    
+    PlantingModule.scanGrassSpots()
+    
+    return true, "Initialization successful"
+end
+
+return PlantingModule
